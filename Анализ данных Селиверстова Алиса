@@ -1,0 +1,87 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# 1. Загрузка данных
+df = pd.read_csv("transaction_fraud_data.csv")
+exchange = pd.read_csv("historical_currency_exchange.csv")
+
+# 2. Преобразование типов
+df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+
+cat_cols = ['vendor_category', 'vendor_type', 'city', 'card_type',
+            'device', 'channel', 'is_high_risk_vendor',
+            'is_outside_home_country', 'is_weekend']
+for col in cat_cols:
+    df[col] = df[col].astype('category')
+
+exchange['date'] = pd.to_datetime(exchange['date'], errors='coerce')
+# 3. Очистка данных
+# Убираем Unknown City
+df = df[df['city'] != 'Unknown City']
+
+# Убираем строки с пропущенными суммами или валютой
+df = df.dropna(subset=['amount', 'currency'])
+# 4. Преобразование сумм в USD
+exchange_dict = exchange.set_index('date').to_dict(orient='index')
+
+def convert_to_usd(row):
+    date = row['timestamp'].date()
+    currency = row['currency']
+    amount = row['amount']
+    try:
+        rate = exchange.loc[exchange['date'] == pd.Timestamp(date), currency].values[0]
+        return amount / rate
+    except:
+        return np.nan
+
+df['amount_usd'] = df.apply(convert_to_usd, axis=1)
+df = df.dropna(subset=['amount_usd'])
+# 5. Сохранение очищенных файлов
+df.to_csv("transaction_fraud_data_cleaned.csv", index=False)
+exchange.to_csv("historical_currency_exchange_cleaned.csv", index=False)
+# 6. Визуализация
+# Распределение сумм транзакций
+plt.figure(figsize=(10,6))
+sns.histplot(df['amount_usd'], bins=100, kde=True)
+plt.title("Распределение сумм транзакций в USD")
+plt.xlabel("Сумма USD")
+plt.ylabel("Количество транзакций")
+plt.xlim(0, df['amount_usd'].quantile(0.99))  # ограничение по 99 перцентилю
+plt.show()
+# Доля мошенничества
+fraud_counts = df['is_fraud'].value_counts(normalize=True) * 100
+plt.figure(figsize=(6,6))
+sns.barplot(x=fraud_counts.index, y=fraud_counts.values)
+plt.title("Доля мошеннических транзакций")
+plt.ylabel("Процент")
+plt.xlabel("is_fraud")
+plt.show()
+# Распределение суммы транзакций (логарифмическая шкала)
+plt.figure(figsize=(10,6))
+sns.histplot(np.log1p(df['amount']), bins=50, kde=True)
+plt.title("Распределение суммы транзакций (log)")
+plt.xlabel("Log(Сумма +1)")
+plt.ylabel("Частота")
+plt.tight_layout()
+plt.show()
+# Доля мошенничества по категориям
+plt.figure(figsize=(10,6))
+fraud_rate = df.groupby('vendor_category')['is_fraud'].mean().sort_values(ascending=False)
+sns.barplot(x=fraud_rate.values, y=fraud_rate.index)
+plt.title("Доля мошенничества по категориям продавцов")
+plt.xlabel("Доля мошенничества")
+plt.ylabel("Категория")
+plt.tight_layout()
+plt.show()
+# Временные паттерны
+df['timestamp'] = pd.to_datetime(df['timestamp'])
+df['hour'] = df['timestamp'].dt.hour
+hourly_fraud = df.groupby('hour')['is_fraud'].mean()*100
+plt.figure()
+sns.lineplot(x=hourly_fraud.index, y=hourly_fraud.values, marker='o')
+plt.title("Доля мошенничества по часам")
+plt.xlabel("Час")
+plt.ylabel("Доля мошенничества (%)")
+plt.show()
